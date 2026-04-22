@@ -1,1 +1,438 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Oceans Across Payroll Platform — Security Groups & IAM
+  Per-tenant SGs, IAM roles with least-privilege, instance profiles
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+
+  NetworkStackName:
+    Type: String
+    Default: oceans-across-networking
+    Description: Name of the networking stack (for cross-stack imports)
+
+Resources:
+
+  # ── Security Groups ───────────────────────────────────────────────────────────
+
+  # ALB Security Group — public-facing, accepts 443 from internet
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public ALB — HTTPS only
+      VpcId: !ImportValue
+        Fn::Sub: "${NetworkStackName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+          Description: Public HTTPS
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+          Description: HTTP redirect to HTTPS
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 9000
+          CidrIp: !ImportValue
+            Fn::Sub: "${NetworkStackName}-VpcCidr"
+          Description: Forward to app tier
+      Tags:
+        - Key: Name
+          Value: sg-alb
+
+  # Companies EC2 Security Group
+  CompanySG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Company portal — accepts traffic from ALB only
+      VpcId: !ImportValue
+        Fn::Sub: "${NetworkStackName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: App port from ALB only
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !ImportValue
+            Fn::Sub: "${NetworkStackName}-VpcCidr"
+          Description: SSH from bastion/SSM within VPC only
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref RDSSecurityGroup
+          Description: PostgreSQL to RDS
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+          Description: Outbound HTTPS (AWS API calls, Secrets Manager)
+      Tags:
+        - Key: Name
+          Value: sg-company
+        - Key: TenantType
+          Value: company
+
+  # Bureaus EC2 Security Group
+  BureauSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Bureau portal — accepts traffic from ALB only
+      VpcId: !ImportValue
+        Fn::Sub: "${NetworkStackName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8001
+          ToPort: 8001
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: App port from ALB only
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !ImportValue
+            Fn::Sub: "${NetworkStackName}-VpcCidr"
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref RDSSecurityGroup
+          Description: PostgreSQL to RDS
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+      Tags:
+        - Key: Name
+          Value: sg-bureau
+        - Key: TenantType
+          Value: bureau
+
+  # Employees EC2 Security Group
+  EmployeeSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Employee portal — accepts traffic from ALB only
+      VpcId: !ImportValue
+        Fn::Sub: "${NetworkStackName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8002
+          ToPort: 8002
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: App port from ALB only
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !ImportValue
+            Fn::Sub: "${NetworkStackName}-VpcCidr"
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref RDSSecurityGroup
+          Description: PostgreSQL to RDS
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+      Tags:
+        - Key: Name
+          Value: sg-employee
+        - Key: TenantType
+          Value: employee
+
+  # RDS Security Group — only accepts PostgreSQL from app SGs
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: RDS PostgreSQL — private, app tier only
+      VpcId: !ImportValue
+        Fn::Sub: "${NetworkStackName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref CompanySG
+          Description: Company app tier
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref BureauSG
+          Description: Bureau app tier
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EmployeeSG
+          Description: Employee app tier
+      # No egress to internet — RDS stays fully private
+      Tags:
+        - Key: Name
+          Value: sg-rds
+
+  # ── IAM Roles per Tenant ──────────────────────────────────────────────────────
+
+  # Base EC2 trust policy (reused across all roles)
+
+  CompanyInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "oceans-company-ec2-role-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore   # SSM agent (no SSH needed)
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: CompanyS3Access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CompanyPrefixOnly
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::oceans-across-payroll-docs-${Environment}"
+                  - !Sub "arn:aws:s3:::oceans-across-payroll-docs-${Environment}/companies/*"
+                Condition:
+                  StringLike:
+                    s3:prefix: "companies/*"
+        - PolicyName: CompanySecretsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:oceans-across/company/*"
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:oceans-across/db-creds*"
+      Tags:
+        - Key: TenantType
+          Value: company
+
+  BureauInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "oceans-bureau-ec2-role-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: BureauS3Access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: BureauPrefixOnly
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::oceans-across-payroll-docs-${Environment}"
+                  - !Sub "arn:aws:s3:::oceans-across-payroll-docs-${Environment}/bureaus/*"
+                Condition:
+                  StringLike:
+                    s3:prefix: "bureaus/*"
+              # Explicit DENY for other tenant prefixes — belt-and-suspenders
+              - Sid: ExplicitDenyOtherTenants
+                Effect: Deny
+                Action: "s3:*"
+                Resource:
+                  - !Sub "arn:aws:s3:::oceans-across-payroll-docs-${Environment}/companies/*"
+                  - !Sub "arn:aws:s3:::oceans-across-payroll-docs-${Environment}/employees/*"
+        - PolicyName: BureauSecretsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:oceans-across/bureau/*"
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:oceans-across/db-creds*"
+      Tags:
+        - Key: TenantType
+          Value: bureau
+
+  EmployeeInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "oceans-employee-ec2-role-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: EmployeeS3Access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EmployeePrefixOnly
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::oceans-across-payroll-docs-${Environment}"
+                  - !Sub "arn:aws:s3:::oceans-across-payroll-docs-${Environment}/employees/*"
+                # Employees: read-only, own prefix only
+              - Sid: ExplicitDenyOtherTenants
+                Effect: Deny
+                Action: "s3:*"
+                Resource:
+                  - !Sub "arn:aws:s3:::oceans-across-payroll-docs-${Environment}/companies/*"
+                  - !Sub "arn:aws:s3:::oceans-across-payroll-docs-${Environment}/bureaus/*"
+        - PolicyName: EmployeeSecretsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:oceans-across/employee/*"
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:oceans-across/db-creds*"
+      Tags:
+        - Key: TenantType
+          Value: employee
+
+  # Instance Profiles (EC2 requires a profile wrapper around the role)
+  CompanyInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "oceans-company-profile-${Environment}"
+      Roles:
+        - !Ref CompanyInstanceRole
+
+  BureauInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "oceans-bureau-profile-${Environment}"
+      Roles:
+        - !Ref BureauInstanceRole
+
+  EmployeeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "oceans-employee-profile-${Environment}"
+      Roles:
+        - !Ref EmployeeInstanceRole
+
+  # CI/CD Deployment Role (used by GitHub Actions via OIDC)
+  CICDDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "oceans-cicd-deploy-role-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringLike:
+                token.actions.githubusercontent.com:sub: "repo:YOUR_GITHUB_ORG/oceans-across-devops:*"
+      Policies:
+        - PolicyName: SSMRunCommandAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    ssm:ResourceTag/Environment: !Ref Environment
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource: "*"
+
+Outputs:
+  ALBSecurityGroupId:
+    Value: !Ref ALBSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ALBSecurityGroupId"
+
+  CompanySGId:
+    Value: !Ref CompanySG
+    Export:
+      Name: !Sub "${AWS::StackName}-CompanySGId"
+
+  BureauSGId:
+    Value: !Ref BureauSG
+    Export:
+      Name: !Sub "${AWS::StackName}-BureauSGId"
+
+  EmployeeSGId:
+    Value: !Ref EmployeeSG
+    Export:
+      Name: !Sub "${AWS::StackName}-EmployeeSGId"
+
+  RDSSGId:
+    Value: !Ref RDSSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-RDSSGId"
+
+  CompanyInstanceProfileArn:
+    Value: !GetAtt CompanyInstanceProfile.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-CompanyInstanceProfileArn"
+
+  BureauInstanceProfileArn:
+    Value: !GetAtt BureauInstanceProfile.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-BureauInstanceProfileArn"
+
+  EmployeeInstanceProfileArn:
+    Value: !GetAtt EmployeeInstanceProfile.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-EmployeeInstanceProfileArn"
 
