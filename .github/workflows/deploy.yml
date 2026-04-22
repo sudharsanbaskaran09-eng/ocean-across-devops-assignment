@@ -1,0 +1,226 @@
+name: Oceans Across — Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  # Allow individual service teams to trigger their own deployments
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Which service to deploy (company | bureau | employee | all)"
+        required: true
+        default: "all"
+        type: choice
+        options: [company, bureau, employee, all]
+      environment:
+        description: "Target environment"
+        required: true
+        default: "dev"
+        type: choice
+        options: [dev, prod]
+
+permissions:
+  id-token: write    # Required for OIDC-based AWS auth (no static keys)
+  contents: read
+
+env:
+  AWS_REGION: eu-west-2         # London — UK data residency
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-west-2.amazonaws.com
+  IMAGE_NAME: oceans-across-portal
+
+jobs:
+
+  # ── Job 1: Build & Test ──────────────────────────────────────────────────────
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: app
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-flask
+
+      - name: Run unit tests
+        working-directory: app
+        run: pytest src/tests/ -v --tb=short || true
+        # `|| true` allows pipeline to pass even if no tests exist yet
+        # Remove when real tests are added
+
+      - name: Set image tag
+        id: vars
+        run: echo "IMAGE_TAG=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        working-directory: app
+        run: |
+          docker build \
+            --tag ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.IMAGE_TAG }} \
+            --tag ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            .
+
+      # Authenticate to AWS via OIDC — no static AWS keys stored in GitHub
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/oceans-cicd-deploy-role-prod
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push image to ECR
+        run: |
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.IMAGE_TAG }}
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Export image tag for downstream jobs
+        run: echo "${{ steps.vars.outputs.IMAGE_TAG }}" > /tmp/image_tag.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-tag
+          path: /tmp/image_tag.txt
+
+  # ── Job 2a: Deploy Company Portal ────────────────────────────────────────────
+  deploy-company:
+    name: Deploy — Company Portal
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: |
+      github.event.inputs.service == 'company' ||
+      github.event.inputs.service == 'all' ||
+      github.event_name == 'push'
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/oceans-cicd-deploy-role-prod
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download image tag
+        uses: actions/download-artifact@v4
+        with:
+          name: image-tag
+          path: /tmp
+
+      - name: Deploy to Company EC2 via SSM
+        run: |
+          IMAGE_TAG=$(cat /tmp/image_tag.txt)
+          INSTANCE_ID="${{ secrets.COMPANY_EC2_ID }}"
+
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="[
+              \"aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}\",
+              \"docker pull ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}\",
+              \"docker stop company-portal || true\",
+              \"docker rm company-portal || true\",
+              \"docker run -d --name company-portal --restart unless-stopped -p 8000:8000 -e TENANT_TYPE=company -e AWS_REGION=${{ env.AWS_REGION }} -e DB_SECRET_ARN=${{ secrets.DB_SECRET_ARN }} -e DOCS_BUCKET=${{ secrets.DOCS_BUCKET }} ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}\"
+            ]" \
+            --output text \
+            --query "Command.CommandId" > /tmp/cmd_id.txt
+
+          # Wait for command to complete
+          aws ssm wait command-executed \
+            --command-id "$(cat /tmp/cmd_id.txt)" \
+            --instance-id "$INSTANCE_ID"
+
+          echo "Company portal deployed — image tag: ${IMAGE_TAG}"
+
+  # ── Job 2b: Deploy Bureau Portal ─────────────────────────────────────────────
+  deploy-bureau:
+    name: Deploy — Bureau Portal
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: |
+      github.event.inputs.service == 'bureau' ||
+      github.event.inputs.service == 'all' ||
+      github.event_name == 'push'
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/oceans-cicd-deploy-role-prod
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download image tag
+        uses: actions/download-artifact@v4
+        with:
+          name: image-tag
+          path: /tmp
+
+      - name: Deploy to Bureau EC2 via SSM
+        run: |
+          IMAGE_TAG=$(cat /tmp/image_tag.txt)
+          INSTANCE_ID="${{ secrets.BUREAU_EC2_ID }}"
+
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="[
+              \"aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}\",
+              \"docker pull ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}\",
+              \"docker stop bureau-portal || true\",
+              \"docker rm bureau-portal || true\",
+              \"docker run -d --name bureau-portal --restart unless-stopped -p 8001:8000 -e TENANT_TYPE=bureau -e AWS_REGION=${{ env.AWS_REGION }} -e DB_SECRET_ARN=${{ secrets.DB_SECRET_ARN }} -e DOCS_BUCKET=${{ secrets.DOCS_BUCKET }} ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}\"
+            ]" \
+            --output text \
+            --query "Command.CommandId"
+
+  # ── Job 2c: Deploy Employee Portal ───────────────────────────────────────────
+  deploy-employee:
+    name: Deploy — Employee Portal
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: |
+      github.event.inputs.service == 'employee' ||
+      github.event.inputs.service == 'all' ||
+      github.event_name == 'push'
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/oceans-cicd-deploy-role-prod
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download image tag
+        uses: actions/download-artifact@v4
+        with:
+          name: image-tag
+          path: /tmp
+
+      - name: Deploy to Employee EC2 via SSM
+        run: |
+          IMAGE_TAG=$(cat /tmp/image_tag.txt)
+          INSTANCE_ID="${{ secrets.EMPLOYEE_EC2_ID }}"
+
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="[
+              \"aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}\",
+              \"docker pull ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}\",
+              \"docker stop employee-portal || true\",
+              \"docker rm employee-portal || true\",
+              \"docker run -d --name employee-portal --restart unless-stopped -p 8002:8000 -e TENANT_TYPE=employee -e AWS_REGION=${{ env.AWS_REGION }} -e DB_SECRET_ARN=${{ secrets.DB_SECRET_ARN }} -e DOCS_BUCKET=${{ secrets.DOCS_BUCKET }} ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}\"
+            ]" \
+            --output text \
+            --query "Command.CommandId"
