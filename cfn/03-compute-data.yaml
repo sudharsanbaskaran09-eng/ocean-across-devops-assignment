@@ -1,1 +1,337 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Oceans Across Payroll Platform — Compute & Data Layer
+  EC2 (one per tenant), RDS PostgreSQL, S3 bucket with versioning & encryption
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+
+  NetworkStackName:
+    Type: String
+    Default: oceans-across-networking
+
+  SecurityStackName:
+    Type: String
+    Default: oceans-across-security
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Latest Amazon Linux 2023 AMI (auto-resolved via SSM)
+
+  DBMasterUsername:
+    Type: String
+    Default: payroll_admin
+    NoEcho: true
+
+  DBMasterPasswordSecret:
+    Type: String
+    Description: ARN of Secrets Manager secret containing the DB master password
+
+Resources:
+
+  # ── EC2 Instances (one per tenant, private subnet) ────────────────────────────
+
+  CompanyEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !ImportValue
+        Fn::Sub: "${NetworkStackName}-PrivateSubnetAppAZ1"
+      SecurityGroupIds:
+        - !ImportValue
+            Fn::Sub: "${SecurityStackName}-CompanySGId"
+      IamInstanceProfile: !ImportValue
+        Fn::Sub: "${SecurityStackName}-CompanyInstanceProfileArn"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y amazon-ssm-agent docker
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+          systemctl enable docker
+          systemctl start docker
+          # Pull and run the company portal container
+          # Image tag is injected by CI/CD pipeline at deploy time
+          echo "Company portal instance ready — tenant=company env=${Environment}" >> /var/log/bootstrap.log
+      Tags:
+        - Key: Name
+          Value: !Sub "oceans-company-ec2-${Environment}"
+        - Key: TenantType
+          Value: company
+        - Key: Environment
+          Value: !Ref Environment
+
+  BureauEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !ImportValue
+        Fn::Sub: "${NetworkStackName}-PrivateSubnetAppAZ1"
+      SecurityGroupIds:
+        - !ImportValue
+            Fn::Sub: "${SecurityStackName}-BureauSGId"
+      IamInstanceProfile: !ImportValue
+        Fn::Sub: "${SecurityStackName}-BureauInstanceProfileArn"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y amazon-ssm-agent docker
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+          systemctl enable docker
+          systemctl start docker
+          echo "Bureau portal instance ready — tenant=bureau env=${Environment}" >> /var/log/bootstrap.log
+      Tags:
+        - Key: Name
+          Value: !Sub "oceans-bureau-ec2-${Environment}"
+        - Key: TenantType
+          Value: bureau
+        - Key: Environment
+          Value: !Ref Environment
+
+  EmployeeEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      SubnetId: !ImportValue
+        Fn::Sub: "${NetworkStackName}-PrivateSubnetAppAZ2"
+      SecurityGroupIds:
+        - !ImportValue
+            Fn::Sub: "${SecurityStackName}-EmployeeSGId"
+      IamInstanceProfile: !ImportValue
+        Fn::Sub: "${SecurityStackName}-EmployeeInstanceProfileArn"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y amazon-ssm-agent docker
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+          systemctl enable docker
+          systemctl start docker
+          echo "Employee portal instance ready — tenant=employee env=${Environment}" >> /var/log/bootstrap.log
+      Tags:
+        - Key: Name
+          Value: !Sub "oceans-employee-ec2-${Environment}"
+        - Key: TenantType
+          Value: employee
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── RDS PostgreSQL ────────────────────────────────────────────────────────────
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Oceans Across RDS subnet group — private DB tier
+      SubnetIds:
+        - !ImportValue
+            Fn::Sub: "${NetworkStackName}-PrivateSubnetDBAZ1"
+        - !ImportValue
+            Fn::Sub: "${NetworkStackName}-PrivateSubnetDBAZ2"
+      Tags:
+        - Key: Name
+          Value: oceans-across-db-subnet-group
+
+  RDSParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: Oceans Across PostgreSQL params — force SSL
+      Family: postgres15
+      Parameters:
+        rds.force_ssl: "1"           # All connections must use SSL
+        log_connections: "1"         # Audit all new connections
+        log_disconnections: "1"
+        log_min_duration_statement: "1000"   # Log queries >1s
+
+  PayrollRDS:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot          # Snapshot before delete
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "oceans-across-payroll-db-${Environment}"
+      DBInstanceClass: db.t3.micro
+      Engine: postgres
+      EngineVersion: "15.4"
+      DBName: payroll
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${DBMasterPasswordSecret}:SecretString:password}}"
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !ImportValue
+            Fn::Sub: "${SecurityStackName}-RDSSGId"
+      MultiAZ: false                  # Set true in production for HA
+      StorageType: gp3
+      AllocatedStorage: "20"
+      StorageEncrypted: true          # AES-256 encryption at rest
+      PubliclyAccessible: false       # Critical — never publicly accessible
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: "02:00-03:00"
+      PreferredMaintenanceWindow: "sun:04:00-sun:05:00"
+      DeletionProtection: true
+      EnableCloudwatchLogsExports:
+        - postgresql
+        - upgrade
+      DBParameterGroupName: !Ref RDSParameterGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "oceans-payroll-rds-${Environment}"
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── S3 Bucket ─────────────────────────────────────────────────────────────────
+
+  PayrollDocsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub "oceans-across-payroll-docs-${Environment}-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms   # KMS for payroll data (stronger than AES256)
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: MoveOldVersionsToGlacier
+            Status: Enabled
+            NoncurrentVersionTransitions:
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+            NoncurrentVersionExpirationInDays: 2555   # 7 years retention (UK GDPR)
+      LoggingConfiguration:
+        DestinationBucketName: !Ref AccessLogsBucket
+        LogFilePrefix: "s3-access-logs/"
+      Tags:
+        - Key: Name
+          Value: !Sub "oceans-payroll-docs-${Environment}"
+        - Key: DataClassification
+          Value: Highly-Sensitive
+        - Key: GDPRRelevant
+          Value: "true"
+
+  # Separate bucket for S3 access logs (no versioning needed, short retention)
+  AccessLogsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub "oceans-across-access-logs-${Environment}-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireLogs
+            Status: Enabled
+            ExpirationInDays: 365
+
+  # S3 Bucket Policy — enforce tenant prefix isolation + deny unencrypted uploads
+  PayrollDocsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PayrollDocsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # Deny any upload without server-side encryption
+          - Sid: DenyUnencryptedUploads
+            Effect: Deny
+            Principal: "*"
+            Action: s3:PutObject
+            Resource: !Sub "${PayrollDocsBucket.Arn}/*"
+            Condition:
+              "Null":
+                s3:x-amz-server-side-encryption: "true"
+
+          # Deny HTTP (only HTTPS allowed)
+          - Sid: DenyHTTP
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt PayrollDocsBucket.Arn
+              - !Sub "${PayrollDocsBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+          # Company role may only access /companies/* prefix
+          - Sid: CompanyRolePrefixEnforcement
+            Effect: Deny
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/oceans-company-ec2-role-${Environment}"
+            Action: "s3:*"
+            Resource: !Sub "${PayrollDocsBucket.Arn}/*"
+            Condition:
+              StringNotLike:
+                s3:prefix: "companies/*"
+
+          # Bureau role may only access /bureaus/* prefix
+          - Sid: BureauRolePrefixEnforcement
+            Effect: Deny
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/oceans-bureau-ec2-role-${Environment}"
+            Action: "s3:*"
+            Resource: !Sub "${PayrollDocsBucket.Arn}/*"
+            Condition:
+              StringNotLike:
+                s3:prefix: "bureaus/*"
+
+          # Employee role may only access /employees/* prefix
+          - Sid: EmployeeRolePrefixEnforcement
+            Effect: Deny
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/oceans-employee-ec2-role-${Environment}"
+            Action: "s3:*"
+            Resource: !Sub "${PayrollDocsBucket.Arn}/*"
+            Condition:
+              StringNotLike:
+                s3:prefix: "employees/*"
+
+Outputs:
+  CompanyEC2Id:
+    Value: !Ref CompanyEC2
+    Export:
+      Name: !Sub "${AWS::StackName}-CompanyEC2Id"
+
+  BureauEC2Id:
+    Value: !Ref BureauEC2
+    Export:
+      Name: !Sub "${AWS::StackName}-BureauEC2Id"
+
+  EmployeeEC2Id:
+    Value: !Ref EmployeeEC2
+    Export:
+      Name: !Sub "${AWS::StackName}-EmployeeEC2Id"
+
+  RDSEndpoint:
+    Value: !GetAtt PayrollRDS.Endpoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-RDSEndpoint"
+
+  PayrollBucketName:
+    Value: !Ref PayrollDocsBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-PayrollBucketName"
 
