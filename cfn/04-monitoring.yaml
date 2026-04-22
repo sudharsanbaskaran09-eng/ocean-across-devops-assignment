@@ -1,1 +1,270 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Oceans Across Payroll Platform — Monitoring & Observability
+  CloudWatch alarms, log groups, SNS alerts
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+
+  ComputeStackName:
+    Type: String
+    Default: oceans-across-compute
+
+  AlertEmail:
+    Type: String
+    Description: Email address to receive critical alerts
+    Default: devops@oceans-across.com
+
+Resources:
+
+  # ── SNS Topic for Alerts ──────────────────────────────────────────────────────
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "oceans-across-alerts-${Environment}"
+      DisplayName: Oceans Across Critical Alerts
+      KmsMasterKeyId: alias/aws/sns
+
+  AlertsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertsTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # ── CloudWatch Log Groups ─────────────────────────────────────────────────────
+  # One log group per tenant — isolated log streams
+
+  CompanyAppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/oceans-across/${Environment}/company/app"
+      RetentionInDays: 365        # UK GDPR: 1 year minimum for audit logs
+      Tags:
+        - Key: TenantType
+          Value: company
+
+  BureauAppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/oceans-across/${Environment}/bureau/app"
+      RetentionInDays: 365
+      Tags:
+        - Key: TenantType
+          Value: bureau
+
+  EmployeeAppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/oceans-across/${Environment}/employee/app"
+      RetentionInDays: 365
+      Tags:
+        - Key: TenantType
+          Value: employee
+
+  InfraLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/oceans-across/${Environment}/infra"
+      RetentionInDays: 90
+
+  RDSLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/rds/instance/oceans-across-payroll-db-${Environment}/postgresql"
+      RetentionInDays: 365
+
+  # ── EC2 CPU Alarms ────────────────────────────────────────────────────────────
+
+  CompanyCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "oceans-company-high-cpu-${Environment}"
+      AlarmDescription: Company EC2 CPU > 80% for 5 minutes
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !ImportValue
+            Fn::Sub: "${ComputeStackName}-CompanyEC2Id"
+      AlarmActions:
+        - !Ref AlertsTopic
+      OKActions:
+        - !Ref AlertsTopic
+      TreatMissingData: notBreaching
+
+  BureauCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "oceans-bureau-high-cpu-${Environment}"
+      AlarmDescription: Bureau EC2 CPU > 80% for 5 minutes
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !ImportValue
+            Fn::Sub: "${ComputeStackName}-BureauEC2Id"
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  EmployeeCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "oceans-employee-high-cpu-${Environment}"
+      AlarmDescription: Employee EC2 CPU > 80% for 5 minutes
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !ImportValue
+            Fn::Sub: "${ComputeStackName}-EmployeeEC2Id"
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  # ── RDS Connection Count Alarm ────────────────────────────────────────────────
+
+  RDSConnectionAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "oceans-rds-high-connections-${Environment}"
+      AlarmDescription: RDS connection count > 80 (db.t3.micro max ~100)
+      MetricName: DatabaseConnections
+      Namespace: AWS/RDS
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Sub "oceans-across-payroll-db-${Environment}"
+      AlarmActions:
+        - !Ref AlertsTopic
+      TreatMissingData: notBreaching
+
+  RDSStorageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "oceans-rds-low-storage-${Environment}"
+      AlarmDescription: RDS free storage < 2 GB
+      MetricName: FreeStorageSpace
+      Namespace: AWS/RDS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 2147483648    # 2 GB in bytes
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Sub "oceans-across-payroll-db-${Environment}"
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  # ── Critical: RDS Publicly Accessible Alarm ───────────────────────────────────
+  # Config rule fires if RDS is ever made public — core of the incident runbook
+
+  RDSPublicAccessConfigRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "oceans-rds-no-public-access-${Environment}"
+      Description: Fires if any RDS instance is made publicly accessible
+      Source:
+        Owner: AWS
+        SourceIdentifier: RDS_INSTANCE_PUBLIC_ACCESS_CHECK
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::RDS::DBInstance
+
+  # EventBridge rule to catch Config non-compliance → SNS
+  RDSPublicAccessEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "oceans-rds-public-access-violation-${Environment}"
+      Description: Alert when RDS Config rule detects public accessibility
+      EventPattern:
+        source:
+          - aws.config
+        detail-type:
+          - Config Rules Compliance Change
+        detail:
+          configRuleName:
+            - !Ref RDSPublicAccessConfigRule
+          newEvaluationResult:
+            complianceType:
+              - NON_COMPLIANT
+      State: ENABLED
+      Targets:
+        - Arn: !Ref AlertsTopic
+          Id: RDSPublicAccessAlert
+
+  # ── Dashboard ─────────────────────────────────────────────────────────────────
+
+  MainDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "OceansAcross-${Environment}"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "properties": {
+                "title": "EC2 CPU Utilisation — All Tenants",
+                "metrics": [
+                  ["AWS/EC2", "CPUUtilization", "InstanceId", "${!ImportValue '${ComputeStackName}-CompanyEC2Id'}", {"label": "Company"}],
+                  ["AWS/EC2", "CPUUtilization", "InstanceId", "${!ImportValue '${ComputeStackName}-BureauEC2Id'}", {"label": "Bureau"}],
+                  ["AWS/EC2", "CPUUtilization", "InstanceId", "${!ImportValue '${ComputeStackName}-EmployeeEC2Id'}", {"label": "Employee"}]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "title": "RDS — Connections & Storage",
+                "metrics": [
+                  ["AWS/RDS", "DatabaseConnections", "DBInstanceIdentifier", "oceans-across-payroll-db-${Environment}"],
+                  ["AWS/RDS", "FreeStorageSpace", "DBInstanceIdentifier", "oceans-across-payroll-db-${Environment}"]
+                ],
+                "period": 60,
+                "stat": "Average",
+                "view": "timeSeries"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  AlertsTopicArn:
+    Value: !Ref AlertsTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-AlertsTopicArn"
+
+  CompanyLogGroup:
+    Value: !Ref CompanyAppLogGroup
+
+  BureauLogGroup:
+    Value: !Ref BureauAppLogGroup
+
+  EmployeeLogGroup:
+    Value: !Ref EmployeeAppLogGroup
 
