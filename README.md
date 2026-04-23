@@ -1,33 +1,4 @@
-# Oceans Across Payroll Platform — DevOps Infrastructure
 
-**Candidate:** Sudharsan B  
-**Role:** DevOps Engineer  
-**Stack:** AWS CloudFormation · Docker · GitHub Actions · Python/Flask · CloudWatch
-
----
-
-## Table of Contents
-
-1. [Architecture Overview](#architecture-overview)
-2. [Reposito
-11. [Trade-offs & Decisions](#trade-offs--decisions)
-
----
-
-## Architecture Overview
-
-```
-                        ┌────────────────────────────────────────────┐
-                        │              AWS eu-west-2 (London)        │
-                        │                                            │
-   Internet             │  ┌──────────────────────────────────────┐  │
-   ──────────►  ALB     │  │         VPC 10.0.0.0/16              │  │
-   (HTTPS 443)  │       │  │                                      │  │
-                │       │  │  Public Subnets (AZ1 / AZ2)          │  │
-                │       │  │  ┌──────────┐  ┌──────────┐          │  │
-                │       │  │  │ ALB (AZ1)│  │ ALB (AZ2)│          │  │
-                │       │  │  │ NAT GW   │  │          │          │  │
-                │       │  │  └──────────┘  └──────────┘          │  │
                 │       │  │                                      │  │
                 │       │  │  Private App Subnets                 │  │
                 │       │  │  ┌────────────┐ ┌─────────┐ ┌──────┐ │  │
