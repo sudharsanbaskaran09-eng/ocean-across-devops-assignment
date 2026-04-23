@@ -9,15 +9,7 @@
 ## Table of Contents
 
 1. [Architecture Overview](#architecture-overview)
-2. [Repository Structure](#repository-structure)
-3. [Setup & Deployment](#setup--deployment)
-4. [Task 1 — AWS Infrastructure](#task-1--aws-infrastructure)
-5. [Task 2 — Multi-Tenancy Architecture](#task-2--multi-tenancy-architecture)
-6. [Task 3 — Security & Access Control](#task-3--security--access-control)
-7. [Task 4 — CI/CD Pipeline](#task-4--cicd-pipeline)
-8. [Task 5 — Monitoring & Incident Readiness](#task-5--monitoring--incident-readiness)
-9. [Task 6 — UK Compliance Considerations](#task-6--uk-compliance-considerations)
-10. [Incident Response Runbook](#incident-response-runbook)
+2. [Reposito
 11. [Trade-offs & Decisions](#trade-offs--decisions)
 
 ---
