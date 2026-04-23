@@ -1,52 +1,5 @@
 
-                │       │  │                                      │  │
-                │       │  │  Private App Subnets                 │  │
-                │       │  │  ┌────────────┐ ┌─────────┐ ┌──────┐ │  │
-                └───────┼──┼─►│  Company   │ │ Bureau  │ │ Emp  │ │  │
-                        │  │  │  EC2 :8000 │ │EC2:8001 │ │EC2   │ │  │
-                 
-oceans-across-devops/
-├── cfn/
-│   ├── 01-networking.yaml       # VPC, subnets, IGW, NAT, route tables, NACLs
-│   ├── 02
-- GitHub repository with the following secrets set:
-  - `AWS_ACCOUNT_ID`
-  - `COMPANY_EC2_ID`, `BUREAU_EC2_ID`, `EMPLOYEE_EC2_ID`
-  - `DB_SECRET_ARN`
-  - `DOCS_BUCKET`
-
-### Step 1 — Create the DB secret in Secrets Manager
-
-```bash
-aws secretsmanager create-secret \
-  --name "oceans-across/db-creds" \
-  --region eu-west-2 \
-  --secret-string '{"username":"payroll_admin","password":"<STRONG_PASSWORD>"}'
-```
-
-### Step 2 — Deploy stacks in order
-
-```bash
-# 1. Networking
-aws cloudformation deploy \
-  --template-file cfn/01-networking.yaml \
-  --stack-name oceans-across-networking \
-  --region eu-west-2
-
-# 2. Security & IAM
-aws cloudformation deploy \
-  --template-file cfn/02-security-iam.yaml \
-  --stack-name oceans-across-security \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region eu-west-2
-
-# 3. Compute & Data
-aws cloudformation deploy \
-  --template-file cfn/03-compute-data.yaml \
-  --stack-name oceans-across-compute \
-  --capabilities CAPABILITY_IAM \
-  --parameter-overrides DBMasterPasswordSecret=oceans-across/db-creds \
-  --region eu-west-2
+   
 
 # 4. Monitoring
 aws cloudformation deploy \
