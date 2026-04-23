@@ -37,30 +37,7 @@
 oceans-across-devops/
 ├── cfn/
 │   ├── 01-networking.yaml       # VPC, subnets, IGW, NAT, route tables, NACLs
-│   ├── 02-security-iam.yaml     # Security groups, IAM roles per tenant
-│   ├── 03-compute-data.yaml     # EC2, RDS, S3
-│   └── 04-monitoring.yaml       # CloudWatch alarms, log groups, SNS, Config rules
-├── app/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── src/
-│       └── app.py               # Flask portal stub with tenant context
-├── .github/
-│   └── workflows/
-│       └── deploy.yml           # GitHub Actions CI/CD pipeline
-├── docs/
-│   └── architecture-diagram.png
-├── README.md                    # This file
-└── ai_log.md                    # AI usage log (mandatory)
-```
-
----
-
-## Setup & Deployment
-
-### Prerequisites
-- AWS CLI configured (`aws configure`) with an IAM user that has CloudFormation admin access
-- Docker (for local image builds)
+│   ├── 02
 - GitHub repository with the following secrets set:
   - `AWS_ACCOUNT_ID`
   - `COMPANY_EC2_ID`, `BUREAU_EC2_ID`, `EMPLOYEE_EC2_ID`
