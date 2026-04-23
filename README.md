@@ -45,39 +45,7 @@ The infrastructure is split across four stacks using cross-stack exports (`Fn::I
 
 ## Task 2 — Multi-Tenancy Architecture
 
-### 2a. Tenant Isolation Strategy
-
-**Chosen model: Shared database with `tenant_id` row-level scoping + schema-per-tenant-type**
-
-The database uses a hybrid approach:
-- Three schemas: `companies`, `bureaus`, `employees` — one per portal type
-- Within each schema, every table has a `tenant_id UUID NOT NULL` column
-- Application-level Row Level Security (PostgreSQL RLS) enforces that all queries are automatically filtered
-
-```sql
--- Example: enable RLS on the payroll_records table
-ALTER TABLE companies.payroll_records ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY tenant_isolation ON companies.payroll_records
-  USING (tenant_id = current_setting('app.current_tenant_id')::uuid);
-```
-
-**Why not database-per-tenant?**  
-On `db.t3.micro`, running 3+ separate RDS instances would immediately breach Free Tier and complicate cross-tenant reporting. Schema-per-type + RLS gives strong logical isolation with a single DB instance, which is appropriate for this scale.
-
-**Tenant context propagation:**  
-1. User authenticates via Cognito (OIDC) — JWT issued with `tenant_id` and `tenant_type` claims
-2. ALB verifies the JWT using its built-in OIDC integration, rejects unauthenticated requests before they reach EC2
-3. ALB injects verified claims as HTTP headers (`X-Tenant-Id`, `X-Tenant-Type`)
-4. Flask middleware reads these headers, validates them, and sets `g.tenant_id` for the request lifetime
-5. Before any DB query, the app runs: `SET LOCAL app.current_tenant_id = '<uuid>';`
-6. PostgreSQL RLS automatically appends the `WHERE tenant_id = ...` condition — the application query never needs to specify it manually
-
-This means cross-tenant leakage requires *both* the application middleware failing *and* the PostgreSQL RLS policy failing simultaneously.
-
-### 2b. Access Boundaries at the Infrastructure Layer
-
-IAM roles are scoped per tenant type with explicit `Deny` statements for other tenants' S3 prefixes. The S3 bucket policy mirrors this with `StringNotLike` prefix conditions. The result: even if application code contains a bug that constructs a path to another tenant's S3 prefix, the IAM policy rejects the API call at the AWS layer before any data is accessed.
+efix, the IAM policy rejects the API call at the AWS layer before any data is accessed.
 
 ### 2c. Tenant Onboarding & Offboarding
 
