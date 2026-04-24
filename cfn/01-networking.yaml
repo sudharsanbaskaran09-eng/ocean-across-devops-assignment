@@ -1,38 +1,4 @@
-AWSTemplateFormatVersion: "2010-09-09"
-Description: >
-  Oceans Across Payroll Platform — Networking Layer
-  VPC, public/private subnets across 2 AZ
-    Default: "10.0.0.0/16"
-
-Resources:
-
-  # ── VPC ──────────────────────────────────────────────────────────────────────
-  VPC:
-    Type: AWS::EC2::VPC
-    Properties:
-      CidrBlock: !Ref VpcCidr
-      EnableDnsHostnames: true
-      EnableDnsSupport: true
-      Tags:
-        - Key: Name
-          Value: !Sub "oceans-across-vpc-${Environment}"
-        - Key: Environment
-          Value: !Ref Environment
-
-  # ── Internet Gateway ─────────────────────────────────────────────────────────
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-    Properties:
-      Tags:
-        - Key: Name
-          Value: !Sub "oceans-across-igw-${Environment}"
-
-  IGWAttachment:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Properties:
-      VpcId: !Ref VPC
-      InternetGatewayId: !Ref InternetGateway
-
+  
   # ── Public Subnets ────────────────────────────────────────────────────────────
   PublicSubnetAZ1:
     Type: AWS::EC2::Subnet
