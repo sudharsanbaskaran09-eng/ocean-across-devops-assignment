@@ -47,34 +47,9 @@ Resources:
         - Key: Tier
           Value: public
 
-  PublicSubnetAZ2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: "10.0.2.0/24"
-      AvailabilityZone: !Select [1, !GetAZs ""]
-      MapPublicIpOnLaunch: true
-      Tags:
         - Key: Name
           Value: public-subnet-az2
-        - Key: Tier
-          Value: public
-
-  # ── Private Subnets (App Tier) ────────────────────────────────────────────────
-  PrivateSubnetAppAZ1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: "10.0.11.0/24"
-      AvailabilityZone: !Select [0, !GetAZs ""]
-      Tags:
-        - Key: Name
-          Value: private-app-subnet-az1
-        - Key: Tier
-          Value: private-app
-
-  PrivateSubnetAppAZ2:
-    Type: AWS::EC2::Subnet
+        - Key: Tie
     Properties:
       VpcId: !Ref VPC
       CidrBlock: "10.0.12.0/24"
