@@ -209,34 +209,4 @@ Outputs:
   PublicSubnetAZ1:
     Value: !Ref PublicSubnetAZ1
     Export:
-      Name: !Sub "${AWS::StackName}-PublicSubnetAZ1"
-
-  PublicSubnetAZ2:
-    Value: !Ref PublicSubnetAZ2
-    Export:
-      Name: !Sub "${AWS::StackName}-PublicSubnetAZ2"
-
-  PrivateSubnetAppAZ1:
-    Value: !Ref PrivateSubnetAppAZ1
-    Export:
-      Name: !Sub "${AWS::StackName}-PrivateSubnetAppAZ1"
-
-  PrivateSubnetAppAZ2:
-    Value: !Ref PrivateSubnetAppAZ2
-    Export:
-      Name: !Sub "${AWS::StackName}-PrivateSubnetAppAZ2"
-
-  PrivateSubnetDBAZ1:
-    Value: !Ref PrivateSubnetDBAZ1
-    Export:
-      Name: !Sub "${AWS::StackName}-PrivateSubnetDBAZ1"
-
-  PrivateSubnetDBAZ2:
-    Value: !Ref PrivateSubnetDBAZ2
-    Export:
-      Name: !Sub "${AWS::StackName}-PrivateSubnetDBAZ2"
-
-  VpcCidr:
-    Value: !Ref VpcCidr
-    Export:
-      Name: !Sub "${AWS::StackName}-VpcCidr"
+      Name: !Sub "${AWS::StackName}-PublicSubnetAZ1
