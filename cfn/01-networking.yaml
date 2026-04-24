@@ -55,29 +55,7 @@
     Properties:
       VpcId: !Ref VPC
       Tags:
-        - Key: Name
-          Value: public-rt
-
-  PublicRoute:
-    Type: AWS::EC2::Route
-    DependsOn: IGWAttachment
-    Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: "0.0.0.0/0"
-      GatewayId: !Ref InternetGateway
-
-  PublicSubnet1RTA:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnetAZ1
-      RouteTableId: !Ref PublicRouteTable
-
-  PublicSubnet2RTA:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnetAZ2
-      RouteTableId: !Ref PublicRouteTable
-
+        - Key: N
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
