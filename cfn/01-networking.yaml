@@ -1,1 +1,417 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Oceans Across Payroll Platform — Networking Layer
+  VPC, public/private subnets across 2 AZs, IGW, NAT Gateway, Route Tables
 
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, prod]
+
+  VpcCidr:
+    Type: String
+    Default: "10.0.0.0/16"
+
+Resources:
+
+  # ── VPC ──────────────────────────────────────────────────────────────────────
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "oceans-across-vpc-${Environment}"
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── Internet Gateway ─────────────────────────────────────────────────────────
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "oceans-across-igw-${Environment}"
+
+  IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # ── Public Subnets ────────────────────────────────────────────────────────────
+  PublicSubnetAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: "10.0.1.0/24"
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: public-subnet-az1
+        - Key: Tier
+          Value: public
+
+  PublicSubnetAZ2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: "10.0.2.0/24"
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: public-subnet-az2
+        - Key: Tier
+          Value: public
+
+  # ── Private Subnets (App Tier) ────────────────────────────────────────────────
+  PrivateSubnetAppAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: "10.0.11.0/24"
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: private-app-subnet-az1
+        - Key: Tier
+          Value: private-app
+
+  PrivateSubnetAppAZ2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: "10.0.12.0/24"
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: private-app-subnet-az2
+        - Key: Tier
+          Value: private-app
+
+  # ── Private Subnets (DB Tier) ─────────────────────────────────────────────────
+  PrivateSubnetDBAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: "10.0.21.0/24"
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: private-db-subnet-az1
+        - Key: Tier
+          Value: private-db
+
+  PrivateSubnetDBAZ2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: "10.0.22.0/24"
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: private-db-subnet-az2
+        - Key: Tier
+          Value: private-db
+
+  # ── NAT Gateway (single, in AZ1 public subnet) ────────────────────────────────
+  NATElasticIP:
+    Type: AWS::EC2::EIP
+    DependsOn: IGWAttachment
+    Properties:
+      Domain: vpc
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATElasticIP.AllocationId
+      SubnetId: !Ref PublicSubnetAZ1
+      Tags:
+        - Key: Name
+          Value: !Sub "oceans-across-nat-${Environment}"
+
+  # ── Route Tables ──────────────────────────────────────────────────────────────
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: public-rt
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IGWAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetAZ1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetAZ2
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: private-rt
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NATGateway
+
+  PrivateAppAZ1RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetAppAZ1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateAppAZ2RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetAppAZ2
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateDBAZ1RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetDBAZ1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateDBAZ2RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetDBAZ2
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ── NACLs ─────────────────────────────────────────────────────────────────────
+  # Public NACL — allows HTTP/HTTPS in, ephemeral out
+  PublicNACL:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: public-nacl
+
+  PublicNACLInboundHTTPS:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicNACL
+      RuleNumber: 100
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: "0.0.0.0/0"
+      PortRange: { From: 443, To: 443 }
+
+  PublicNACLInboundHTTP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicNACL
+      RuleNumber: 110
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: "0.0.0.0/0"
+      PortRange: { From: 80, To: 80 }
+
+  PublicNACLInboundEphemeral:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicNACL
+      RuleNumber: 120
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: "0.0.0.0/0"
+      PortRange: { From: 1024, To: 65535 }
+
+  PublicNACLOutbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PublicNACL
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: true
+      CidrBlock: "0.0.0.0/0"
+
+  PublicNACLAZ1Assoc:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetAZ1
+      NetworkAclId: !Ref PublicNACL
+
+  PublicNACLAZ2Assoc:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetAZ2
+      NetworkAclId: !Ref PublicNACL
+
+  # Private App NACL — only allows traffic from VPC CIDR
+  PrivateAppNACL:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: private-app-nacl
+
+  PrivateAppNACLInbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateAppNACL
+      RuleNumber: 100
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: !Ref VpcCidr
+      PortRange: { From: 8000, To: 9000 }
+
+  PrivateAppNACLInboundEphemeral:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateAppNACL
+      RuleNumber: 110
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: "0.0.0.0/0"
+      PortRange: { From: 1024, To: 65535 }
+
+  PrivateAppNACLOutbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateAppNACL
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      Egress: true
+      CidrBlock: "0.0.0.0/0"
+
+  PrivateAppNACLAZ1Assoc:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetAppAZ1
+      NetworkAclId: !Ref PrivateAppNACL
+
+  PrivateAppNACLAZ2Assoc:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetAppAZ2
+      NetworkAclId: !Ref PrivateAppNACL
+
+  # Private DB NACL — only accepts PostgreSQL (5432) from app subnet range
+  PrivateDBNACL:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: private-db-nacl
+
+  PrivateDBNACLInbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateDBNACL
+      RuleNumber: 100
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: "10.0.11.0/23"   # covers both app subnets
+      PortRange: { From: 5432, To: 5432 }
+
+  PrivateDBNACLInboundEphemeral:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateDBNACL
+      RuleNumber: 110
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: "10.0.11.0/23"
+      PortRange: { From: 1024, To: 65535 }
+
+  PrivateDBNACLOutbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PrivateDBNACL
+      RuleNumber: 100
+      Protocol: 6
+      RuleAction: allow
+      Egress: true
+      CidrBlock: "10.0.11.0/23"
+      PortRange: { From: 1024, To: 65535 }
+
+  PrivateDBNACLAZ1Assoc:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetDBAZ1
+      NetworkAclId: !Ref PrivateDBNACL
+
+  PrivateDBNACLAZ2Assoc:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetDBAZ2
+      NetworkAclId: !Ref PrivateDBNACL
+
+Outputs:
+  VpcId:
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcId"
+
+  PublicSubnetAZ1:
+    Value: !Ref PublicSubnetAZ1
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnetAZ1"
+
+  PublicSubnetAZ2:
+    Value: !Ref PublicSubnetAZ2
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnetAZ2"
+
+  PrivateSubnetAppAZ1:
+    Value: !Ref PrivateSubnetAppAZ1
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetAppAZ1"
+
+  PrivateSubnetAppAZ2:
+    Value: !Ref PrivateSubnetAppAZ2
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetAppAZ2"
+
+  PrivateSubnetDBAZ1:
+    Value: !Ref PrivateSubnetDBAZ1
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetDBAZ1"
+
+  PrivateSubnetDBAZ2:
+    Value: !Ref PrivateSubnetDBAZ2
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetDBAZ2"
+
+  VpcCidr:
+    Value: !Ref VpcCidr
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcCidr"
