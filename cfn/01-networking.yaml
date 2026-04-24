@@ -50,24 +50,6 @@ Resources:
         - Key: Name
           Value: public-subnet-az2
         - Key: Tie
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: "10.0.12.0/24"
-      AvailabilityZone: !Select [1, !GetAZs ""]
-      Tags:
-        - Key: Name
-          Value: private-app-subnet-az2
-        - Key: Tier
-          Value: private-app
-
-  # ── Private Subnets (DB Tier) ─────────────────────────────────────────────────
-  PrivateSubnetDBAZ1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: "10.0.21.0/24"
-      AvailabilityZone: !Select [0, !GetAZs ""]
-      Tags:
         - Key: Name
           Value: private-db-subnet-az1
         - Key: Tier
