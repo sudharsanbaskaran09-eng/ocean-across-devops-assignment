@@ -1,16 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Oceans Across Payroll Platform — Networking Layer
-  VPC, public/private subnets across 2 AZs, IGW, NAT Gateway, Route Tables
-
-Parameters:
-  Environment:
-    Type: String
-    Default: prod
-    AllowedValues: [dev, prod]
-
-  VpcCidr:
-    Type: String
+  VPC, public/private subnets across 2 AZ
     Default: "10.0.0.0/16"
 
 Resources:
