@@ -6,34 +6,6 @@ Description: >
           FromPort: 8000
           ToPort: 8000
           SourceSecurityGroupId: !Ref ALBSecurityGroup
-          Description: App port from ALB only
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: !ImportValue
-            Fn::Sub: "${NetworkStackName}-VpcCidr"
-          Description: SSH from bastion/SSM within VPC only
-      SecurityGroupEgress:
-        - IpProtocol: tcp
-          FromPort: 5432
-          ToPort: 5432
-          SourceSecurityGroupId: !Ref RDSSecurityGroup
-          Description: PostgreSQL to RDS
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: "0.0.0.0/0"
-          Description: Outbound HTTPS (AWS API calls, Secrets Manager)
-      Tags:
-        - Key: Name
-          Value: sg-company
-        - Key: TenantType
-          Value: company
-
-  # Bureaus EC2 Security Group
-  BureauSG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
       GroupDescription: Bureau portal — accepts traffic from ALB only
       VpcId: !ImportValue
         Fn::Sub: "${NetworkStackName}-VpcId"
