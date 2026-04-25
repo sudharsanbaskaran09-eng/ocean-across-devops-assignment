@@ -1,19 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Oceans Across Payroll Platform — Security Groups & IAM
-  Per-tenant SGs, IAM roles with least-privilege, instance profiles
-
-Parameters:
-  Environment:
-    Type: String
-    Default: prod
-
   NetworkStackName:
-    Type: String
-    Default: oceans-across-networking
-    Description: Name of the networking stack (for cross-stack imports)
-
-Resources:
 
   # ── Security Groups ───────────────────────────────────────────────────────────
 
