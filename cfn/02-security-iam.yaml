@@ -2,30 +2,6 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Oceans Across Payroll Platform — Security Groups & IAM
   NetworkStackName:
-
-      GroupDescription: Public ALB — HTTPS only
-      VpcId: !ImportValue
-        Fn::Sub: "${NetworkStackName}-VpcId"
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: "0.0.0.0/0"
-          Description: Public HTTPS
-        - IpProtocol: tcp
-          FromPort: 80
-     
-        - Key: Name
-          Value: sg-alb
-
-  # Companies EC2 Security Group
-  CompanySG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Company portal — accepts traffic from ALB only
-      VpcId: !ImportValue
-        Fn::Sub: "${NetworkStackName}-VpcId"
-      SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 8000
           ToPort: 8000
