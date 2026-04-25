@@ -27,18 +27,6 @@ Description: >
       GroupDescription: Employee portal — accepts traffic from ALB only
       VpcId: !ImportValue
         Fn::Sub: "${NetworkStackName}-VpcId"
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 8002
-          ToPort: 8002
-          SourceSecurityGroupId: !Ref ALBSecurityGroup
-          Description: App port from ALB only
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: !ImportValue
-            Fn::Sub: "${NetworkStackName}-VpcCidr"
-      SecurityGroupEgress:
         - IpProtocol: tcp
           FromPort: 5432
           ToPort: 5432
