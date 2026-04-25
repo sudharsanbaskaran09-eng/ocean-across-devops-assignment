@@ -3,12 +3,6 @@ Description: >
   Oceans Across Payroll Platform — Security Groups & IAM
   NetworkStackName:
 
-  # ── Security Groups ───────────────────────────────────────────────────────────
-
-  # ALB Security Group — public-facing, accepts 443 from internet
-  ALBSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
       GroupDescription: Public ALB — HTTPS only
       VpcId: !ImportValue
         Fn::Sub: "${NetworkStackName}-VpcId"
