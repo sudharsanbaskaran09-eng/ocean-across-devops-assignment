@@ -1,14 +1,150 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Oceans Across Payroll Platform — Security Groups & IAM
+  Per-tenant SGs, IAM roles with least-privilege, instance profiles
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+
   NetworkStackName:
+    Type: String
+    Default: oceans-across-networking
+    Description: Name of the networking stack (for cross-stack imports)
+
+Resources:
+
+  # ── Security Groups ───────────────────────────────────────────────────────────
+
+  # ALB Security Group — public-facing, accepts 443 from internet
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public ALB — HTTPS only
+      VpcId: !ImportValue
+        Fn::Sub: "${NetworkStackName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+          Description: Public HTTPS
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+          Description: HTTP redirect to HTTPS
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 9000
+          CidrIp: !ImportValue
+            Fn::Sub: "${NetworkStackName}-VpcCidr"
+          Description: Forward to app tier
+      Tags:
+        - Key: Name
+          Value: sg-alb
+
+  # Companies EC2 Security Group
+  CompanySG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Company portal — accepts traffic from ALB only
+      VpcId: !ImportValue
+        Fn::Sub: "${NetworkStackName}-VpcId"
+      SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 8000
           ToPort: 8000
           SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: App port from ALB only
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !ImportValue
+            Fn::Sub: "${NetworkStackName}-VpcCidr"
+          Description: SSH from bastion/SSM within VPC only
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref RDSSecurityGroup
+          Description: PostgreSQL to RDS
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+          Description: Outbound HTTPS (AWS API calls, Secrets Manager)
+      Tags:
+        - Key: Name
+          Value: sg-company
+        - Key: TenantType
+          Value: company
+
+  # Bureaus EC2 Security Group
+  BureauSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
       GroupDescription: Bureau portal — accepts traffic from ALB only
       VpcId: !ImportValue
+        Fn::Sub: "${NetworkStackName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8001
+          ToPort: 8001
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: App port from ALB only
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !ImportValue
+            Fn::Sub: "${NetworkStackName}-VpcCidr"
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref RDSSecurityGroup
+          Description: PostgreSQL to RDS
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+      Tags:
+        - Key: Name
+          Value: sg-bureau
+        - Key: TenantType
+          Value: bureau
 
+  # Employees EC2 Security Group
+  EmployeeSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Employee portal — accepts traffic from ALB only
+      VpcId: !ImportValue
+        Fn::Sub: "${NetworkStackName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8002
+          ToPort: 8002
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: App port from ALB only
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !ImportValue
+            Fn::Sub: "${NetworkStackName}-VpcCidr"
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref RDSSecurityGroup
+          Description: PostgreSQL to RDS
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+      Tags:
         - Key: Name
           Value: sg-employee
         - Key: TenantType
