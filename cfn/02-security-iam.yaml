@@ -14,17 +14,7 @@ Description: >
           Description: Public HTTPS
         - IpProtocol: tcp
           FromPort: 80
-          ToPort: 80
-          CidrIp: "0.0.0.0/0"
-          Description: HTTP redirect to HTTPS
-      SecurityGroupEgress:
-        - IpProtocol: tcp
-          FromPort: 8000
-          ToPort: 9000
-          CidrIp: !ImportValue
-            Fn::Sub: "${NetworkStackName}-VpcCidr"
-          Description: Forward to app tier
-      Tags:
+     
         - Key: Name
           Value: sg-alb
 
