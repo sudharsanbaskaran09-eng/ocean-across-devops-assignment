@@ -4,9 +4,7 @@ __pycache__/
 .env
 .env.*
 *.tfstate
-*.tfstate.backup
-.terraform/
-node_modules/
+
 .DS_Store
 *.log
 dist/
